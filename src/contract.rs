@@ -3,7 +3,7 @@ use std::borrow::BorrowMut;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::{entry_point, to_binary};
 use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult, QueryResponse};
-use elastic_elgamal::app::{EncryptedChoice, SingleChoice};
+use elastic_elgamal::app::{EncryptedChoice, SingleChoice, ChoiceParams};
 use elastic_elgamal::{Ciphertext, RingProof, LogEqualityProof};
 use elastic_elgamal::group::{Ristretto, ElementOps};
 // use cw2::set_contract_version;
@@ -205,7 +205,6 @@ mod tests {
         poll_response = vote(choice_params.clone(), 0, &mut rng, &mut deps, info.clone());
         let enc_votes = deserialize_encrypted_vote(poll_response.encrypted_tally);
         check_vote(sk.clone(), enc_votes, lookup_table.clone(), 1, 0, 1);
-
 
         // Add Vote3
         poll_response = vote(choice_params.clone(), 0, &mut rng, &mut deps, info.clone());

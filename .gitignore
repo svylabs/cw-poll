@@ -16,8 +16,6 @@
 .idea
 
 
-.cargo/
 .circleci/
 .editorconfig
 .github/
-artifacts/
