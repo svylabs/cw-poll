@@ -10,7 +10,10 @@ pub enum ContractError {
     Unauthorized {},
 
     #[error("Unable to save state")]
-    StateError {}
+    StateError {},
+    
+    #[error("Malformed vote")]
+    ProofVerificationFailed {}
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }

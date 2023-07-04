@@ -1,4 +1,4 @@
-use elastic_elgamal::{Ciphertext, group::Ristretto};
+use elastic_elgamal::{Ciphertext, group::Ristretto, PublicKey};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -65,4 +65,8 @@ pub fn element_to_base64(val: <Ristretto as ElementOps>::Element) -> String {
     buffer.resize( 32, 0);
     Ristretto::serialize_element(&val, &mut buffer);
     to_base64(buffer)
+}
+
+pub fn to_public_key(val: String) -> PublicKey<Ristretto> {
+    PublicKey::<Ristretto>::from_bytes(from_base64(&val).as_slice()).unwrap()
 }

@@ -12,7 +12,7 @@ use crate::error::ContractError;
 use crate::helpers::from_base64;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg, PollResponse};
 use crate::state::{POLL_PUB_KEY, POLL, ENCRYPTED_VOTE, TOTAL_VOTES};
-use crate::helpers::{serialize_encrypted_vote, deserialize_encrypted_vote};
+use crate::helpers::{serialize_encrypted_vote, deserialize_encrypted_vote, to_public_key};
 
 
 /*
@@ -74,7 +74,20 @@ fn add_vote(deps: DepsMut, env: Env, vote: crate::msg::Vote) -> Result<Response,
     let encrypted_choice = EncryptedChoice::<Ristretto, SingleChoice>::new_encrypted_choice(encrypted_choices.clone(), range_proof, sum_proof);
 
     // TODO: Verify encrypted choice proofs for single / multiple
+    let public_key = to_public_key(POLL_PUB_KEY.load(deps.storage).unwrap());
+    let poll_details = POLL.load(deps.storage).unwrap();
+    let result_ciphertexts = encrypted_choice.verify(&ChoiceParams::single(public_key, poll_details.choices.len()));
+    match result_ciphertexts {
+        Ok(ciphertexts) => {
+            // ZKP Verification was successful
+            aggregate_vote(deps, vote, ciphertexts.to_vec())
+        },
+        Err(err) => Err(ContractError::ProofVerificationFailed{  })
+     }
 
+}
+
+fn aggregate_vote(deps: DepsMut, vote: crate::msg::Vote, encrypted_choices: Vec<Ciphertext<Ristretto>>) -> Result<Response, ContractError> {
     // Sum and store the vote
     if (ENCRYPTED_VOTE.exists(deps.storage)) {
         let stored_tally = ENCRYPTED_VOTE.load(deps.storage).unwrap();
@@ -92,7 +105,6 @@ fn add_vote(deps: DepsMut, env: Env, vote: crate::msg::Vote) -> Result<Response,
         ENCRYPTED_VOTE.save(deps.storage, &vote.ciphertexts);
         // Check for errors
     }
-
     Ok(Response::default())
 }
 

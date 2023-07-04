@@ -15,7 +15,7 @@
 *.iml
 .idea
 
+artifacts
+.github
 
-.circleci/
-.editorconfig
-.github/
+
