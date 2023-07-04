@@ -260,6 +260,7 @@ dependencies = [
  "cw-storage-plus",
  "cw2",
  "elastic-elgamal",
+ "merlin",
  "rand",
  "schemars",
  "serde",

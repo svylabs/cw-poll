@@ -1,10 +1,10 @@
-use elastic_elgamal::{Ciphertext, group::Ristretto, PublicKey};
+use elastic_elgamal::{Ciphertext, group::Ristretto, PublicKey, VerifiableDecryption, LogEqualityProof, CandidateDecryption};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use cosmwasm_std::{to_binary, Addr, CosmosMsg, StdResult, WasmMsg};
 
-use crate::msg::ExecuteMsg;
+use crate::msg::{ExecuteMsg, Decryption};
 use base64::{engine::general_purpose, Engine};
 use elastic_elgamal::group::{ElementOps};
 
@@ -69,4 +69,29 @@ pub fn element_to_base64(val: <Ristretto as ElementOps>::Element) -> String {
 
 pub fn to_public_key(val: String) -> PublicKey<Ristretto> {
     PublicKey::<Ristretto>::from_bytes(from_base64(&val).as_slice()).unwrap()
+}
+
+pub fn deserialize_decryption(decryption: Decryption) -> (Vec<CandidateDecryption<Ristretto>>, Vec<LogEqualityProof<Ristretto>>) {
+    let mut candidate_decryptions = vec![];
+    let mut proofs = vec![];
+    for (index, decryption_str) in decryption.verifiable_decryptions.iter().enumerate() {
+        candidate_decryptions.push(CandidateDecryption::<Ristretto>::from_bytes(from_base64(decryption_str).as_slice()).unwrap());
+        proofs.push(LogEqualityProof::<Ristretto>::from_bytes(from_base64(decryption.proofs.get(index).unwrap()).as_slice()).unwrap());
+    }
+    (candidate_decryptions, proofs)
+}
+
+pub fn serialize_decryption(verifiable_decryptions: Vec<VerifiableDecryption<Ristretto>>, proofs: Vec<LogEqualityProof<Ristretto>>) -> Decryption {
+    assert!(verifiable_decryptions.len() == proofs.len(), "Decryptions and proofs should have equal length");
+    let mut serialized_decryptions = vec![];
+    let mut serialized_proofs = vec![];
+    for (index, verifiable_decryption) in verifiable_decryptions.iter().enumerate() {
+        serialized_decryptions.push(to_base64(verifiable_decryption.to_bytes().to_vec()));
+        let proof = proofs.get(index).unwrap();
+        serialized_proofs.push(to_base64(proof.to_bytes().to_vec()));
+    }
+    Decryption { 
+        verifiable_decryptions: serialized_decryptions, 
+        proofs: serialized_proofs 
+    }
 }

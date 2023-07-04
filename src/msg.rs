@@ -29,6 +29,12 @@ pub struct Vote {
 }
 
 #[cw_serde]
+pub struct Decryption {
+    pub verifiable_decryptions: Vec<String>,
+    pub proofs: Vec<String>
+}
+
+#[cw_serde]
 pub struct InstantiateMsg {
     pub poll_public_key: String 
 }
@@ -41,8 +47,8 @@ pub enum ExecuteMsg {
     AddVote {
         vote: Vote
     },
-    SubmitDecryptedTally {
-        poll_tally: PollTally
+    DecryptTally {
+        decryption: Decryption
     }
 }
 
@@ -59,5 +65,6 @@ pub struct PollResponse {
     pub poll_details: Poll,
     pub total_votes: u32,
     pub poll_public_key: String,
-    pub encrypted_tally: Vec<Vec<String>>
+    pub encrypted_tally: Vec<Vec<String>>,
+    pub decrypted_tally: Vec<u64>
 }

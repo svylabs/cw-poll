@@ -13,7 +13,10 @@ pub enum ContractError {
     StateError {},
     
     #[error("Malformed vote")]
-    ProofVerificationFailed {}
+    ProofVerificationFailed {},
+
+    #[error("Invalid Decryption")]
+    DecryptionFailed {}
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }
