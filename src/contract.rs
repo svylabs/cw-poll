@@ -131,7 +131,6 @@ fn decrypt_tally(deps: DepsMut, env: Env, decryption_with_proof: crate::msg::Dec
             return Err(ContractError::DecryptionFailed {})
         }
     }
-    println!("{:?}", tally);
     // 2. Store the tally
     DECRYPTED_TALLY.save(deps.storage, &tally);
     Ok(Response::default())
@@ -148,8 +147,8 @@ fn query_poll(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<PollResponse> {
     Ok(PollResponse {
         poll_details: POLL.load(deps.storage).unwrap(),
         total_votes: TOTAL_VOTES.load(deps.storage).unwrap_or_default(),
-        poll_public_key: POLL_PUB_KEY.load(deps.storage).unwrap(),
-        encrypted_tally: ENCRYPTED_VOTE.load(deps.storage).unwrap(),
+        poll_public_key: POLL_PUB_KEY.load(deps.storage).unwrap_or_default(),
+        encrypted_tally: ENCRYPTED_VOTE.load(deps.storage).unwrap_or_default(),
         decrypted_tally: DECRYPTED_TALLY.load(deps.storage).unwrap_or_default()
     })
 }
