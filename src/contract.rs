@@ -3,14 +3,14 @@ use std::borrow::BorrowMut;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::{entry_point, to_binary};
 use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult, QueryResponse};
-use elastic_elgamal::app::{EncryptedChoice, SingleChoice, ChoiceParams};
+use elastic_elgamal::app::{EncryptedChoice, SingleChoice, ChoiceParams, MultiChoice, ChoiceVerificationError};
 use elastic_elgamal::{Ciphertext, RingProof, LogEqualityProof, DiscreteLogTable};
 use elastic_elgamal::group::{Ristretto, ElementOps};
 // use cw2::set_contract_version;
 
 use crate::error::ContractError;
 use crate::helpers::{from_base64, deserialize_decryption};
-use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg, PollResponse};
+use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg, PollResponse, Poll};
 use crate::state::{POLL_PUB_KEY, POLL, ENCRYPTED_VOTE, TOTAL_VOTES, DECRYPTED_TALLY};
 use crate::helpers::{serialize_encrypted_vote, deserialize_encrypted_vote, to_public_key};
 
@@ -64,27 +64,49 @@ fn setup_poll(deps: DepsMut, env: Env, poll_details: crate::msg::Poll) -> Result
 
 fn add_vote(deps: DepsMut, env: Env, vote: crate::msg::Vote) -> Result<Response, ContractError> {
     // 1. Convert vote from base64 string to bytes
-    
-    let encrypted_choices = deserialize_encrypted_vote(vote.ciphertexts.clone());
 
-    let range_proof = RingProof::<Ristretto>::from_bytes(from_base64(&vote.range_proof).as_slice()).unwrap();
-
-    let sum_proof = LogEqualityProof::<Ristretto>::from_bytes(from_base64(&vote.sum_proof).as_slice()).unwrap();
-
-    let encrypted_choice = EncryptedChoice::<Ristretto, SingleChoice>::new_encrypted_choice(encrypted_choices.clone(), range_proof, sum_proof);
-
-    // TODO: Verify encrypted choice proofs for single / multiple
-    let public_key = to_public_key(POLL_PUB_KEY.load(deps.storage).unwrap());
     let poll_details = POLL.load(deps.storage).unwrap();
-    let result_ciphertexts = encrypted_choice.verify(&ChoiceParams::single(public_key, poll_details.choices.len()));
+    let public_key = to_public_key(POLL_PUB_KEY.load(deps.storage).unwrap());    
+    let encrypted_choices = deserialize_encrypted_vote(vote.ciphertexts.clone());
+    let ring_proof = RingProof::<Ristretto>::from_bytes(from_base64(&vote.range_proof).as_slice()).unwrap();
+
+
+    let result_ciphertexts = verify_vote(poll_details, public_key, encrypted_choices, ring_proof, &vote.sum_proof);
+    
     match result_ciphertexts {
         Ok(ciphertexts) => {
             // ZKP Verification was successful
-            aggregate_vote(deps, vote, ciphertexts.to_vec())
+            aggregate_vote(deps, vote, ciphertexts)
         },
         Err(err) => Err(ContractError::ProofVerificationFailed{  })
      }
 
+}
+
+fn verify_vote(poll_details: Poll, public_key: elastic_elgamal::PublicKey<Ristretto>, encrypted_choices: Vec<Ciphertext<Ristretto>>, ring_proof: RingProof<Ristretto>, sum_proof: &String) 
+        -> Result<Vec<Ciphertext<Ristretto>>, ChoiceVerificationError> {
+    let total_choices = poll_details.choices.len();
+    match poll_details.poll_type  {
+        crate::msg::PollType::SingleChoice => {
+            let sum_proof = LogEqualityProof::<Ristretto>::from_bytes(from_base64(sum_proof).as_slice()).unwrap();
+            let sc = EncryptedChoice::<Ristretto, SingleChoice>::new_encrypted_choice(encrypted_choices.clone(), ring_proof, sum_proof);
+            // handle error
+            let res = sc.verify(&ChoiceParams::single(public_key, total_choices));
+            match res {
+                Ok(val) => Ok(val.to_vec()),
+                Err(err) => Err(err)
+            }
+        },
+        crate::msg::PollType::MultiChoice => {
+            let mc = EncryptedChoice::<Ristretto, MultiChoice>::new_encrypted_choice(encrypted_choices.clone(), ring_proof, ());
+            // handle error
+            let res = mc.verify(&ChoiceParams::multi(public_key, total_choices));
+            match res {
+                Ok(val) => Ok(val.to_vec()),
+                Err(err) => Err(err)
+            }
+        }
+    }
 }
 
 fn aggregate_vote(deps: DepsMut, vote: crate::msg::Vote, encrypted_choices: Vec<Ciphertext<Ristretto>>) -> Result<Response, ContractError> {
@@ -156,7 +178,7 @@ fn query_poll(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<PollResponse> {
 #[cfg(test)]
 mod tests {
 
-    use elastic_elgamal::{group::Ristretto, PublicKey, Keypair, app::ChoiceParams, app::{EncryptedChoice, SingleChoice}, CandidateDecryption, DiscreteLogTable, SecretKey, Ciphertext, VerifiableDecryption};
+    use elastic_elgamal::{group::Ristretto, PublicKey, Keypair, app::ChoiceParams, app::{EncryptedChoice, SingleChoice, MultiChoice}, CandidateDecryption, DiscreteLogTable, SecretKey, Ciphertext, VerifiableDecryption};
     use rand::{thread_rng, rngs::ThreadRng};
     use cosmwasm_std::{testing::{
         mock_dependencies, mock_env, mock_info, MockQuerier, MOCK_CONTRACT_ADDR, MockStorage, MockApi,
@@ -175,6 +197,24 @@ mod tests {
                 ciphertexts: serialize_encrypted_vote(enc.choices_unchecked().to_vec()),
                 range_proof: to_base64(enc.range_proof().to_bytes()),
                 sum_proof: to_base64(enc.sum_proof().to_bytes())
+            }
+        };
+        let res = execute(deps.as_mut(), mock_env(), info, vote1).unwrap();
+
+        // Query,  decrypt and check
+        let q = QueryMsg::GetPoll {  };
+        let res = query(deps.as_ref(), mock_env(), q.clone()).unwrap();
+        let poll_response = from_binary::<PollResponse>(&res).unwrap();
+        poll_response
+    }
+
+    fn vote_multi(choice_params: ChoiceParams<Ristretto, MultiChoice>, choices: Vec<bool>, rng: &mut ThreadRng, deps: &mut OwnedDeps<MockStorage, MockApi, MockQuerier, Empty>, info: MessageInfo) -> PollResponse {
+        let enc = EncryptedChoice::new(&choice_params, choices.as_slice(), rng);
+        let vote1 = ExecuteMsg::AddVote {
+            vote: Vote {
+                ciphertexts: serialize_encrypted_vote(enc.choices_unchecked().to_vec()),
+                range_proof: to_base64(enc.range_proof().to_bytes()),
+                sum_proof: "".to_string()
             }
         };
         let res = execute(deps.as_mut(), mock_env(), info, vote1).unwrap();
@@ -285,7 +325,86 @@ mod tests {
         assert!(poll_response.decrypted_tally.len() == 3, "Decrypted tally should be equal to 3");
         assert!(*poll_response.decrypted_tally.get(0).unwrap() == 2);
         assert!(*poll_response.decrypted_tally.get(1).unwrap() == 1);
-        assert!(*poll_response.decrypted_tally.get(1).unwrap() == 1);        
+        assert!(*poll_response.decrypted_tally.get(2).unwrap() == 1);        
+        
+    }
+
+
+    #[test]
+    fn test_multi_choice_flow() {
+        let mut deps = mock_dependencies();
+        let creator = String::from("creator");
+        let info = mock_info(&creator, &[]);
+        // Generate Key
+        let mut rng = thread_rng();
+        let lookup_table = DiscreteLogTable::<Ristretto>::new(0..5);
+        let (pk, sk) = Keypair::<Ristretto>::generate(&mut rng).into_tuple();
+
+        // Instantiate
+        let inst = InstantiateMsg {
+            poll_public_key: to_base64(pk.as_bytes().to_vec())
+        };
+        
+        instantiate(deps.as_mut(), mock_env(), info.clone(), inst);
+
+        // Setup Poll
+        let setup = ExecuteMsg::SetupPoll { 
+            poll_details: Poll {
+                topic: String::from("Yes or No or Don't no"),
+                choices: vec![String::from("Yes"), String::from("No"), String::from("Don't no")],
+                poll_type: PollType::MultiChoice,
+                start_time: 0,
+                end_time: 1
+            }
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), setup).unwrap();
+        // Add Vote1
+        let choice_params = ChoiceParams::multi(pk, 3);
+        ///
+        let mut poll_response = vote_multi(choice_params.clone(), vec![false, false, true], &mut rng, &mut deps, info.clone());
+        let mut enc_votes = deserialize_encrypted_vote(poll_response.encrypted_tally);
+        check_vote(sk.clone(), enc_votes, lookup_table.clone(), 0, 0, 1);
+        
+
+        // Add Vote2
+        poll_response = vote_multi(choice_params.clone(), vec![false, false, true], &mut rng, &mut deps, info.clone());
+        let enc_votes = deserialize_encrypted_vote(poll_response.encrypted_tally);
+        check_vote(sk.clone(), enc_votes, lookup_table.clone(), 0, 0, 2);
+
+        // Add Vote3
+        poll_response = vote_multi(choice_params.clone(), vec![true, false, true], &mut rng, &mut deps, info.clone());
+        let enc_votes = deserialize_encrypted_vote(poll_response.encrypted_tally);
+        check_vote(sk.clone(), enc_votes, lookup_table.clone(), 1, 0, 3);
+
+        // Add Vote4
+        poll_response = vote_multi(choice_params.clone(), vec![true, true, false], &mut rng, &mut deps, info.clone());
+        let enc_votes = deserialize_encrypted_vote(poll_response.encrypted_tally);
+        check_vote(sk.clone(), enc_votes.clone(), lookup_table.clone(), 2, 1, 3);
+
+        let q = QueryMsg::GetPoll {  };
+        let res = query(deps.as_ref(), mock_env(), q.clone()).unwrap();
+        let poll_response = from_binary::<PollResponse>(&res).unwrap();
+        assert!(poll_response.decrypted_tally.len() == 0, "Decrypted tally should be empty");
+
+        let mut verifiable_decryptions = vec![];
+        let mut proofs = vec![];
+        for ciphertext in enc_votes {
+            let keypair = Keypair::<Ristretto>::from(sk.clone());
+            let mut transcript = merlin::Transcript::new(b"ciphertext decrypt");
+            let decryption = VerifiableDecryption::new(ciphertext, &keypair, &mut transcript, &mut rng);
+            verifiable_decryptions.push(decryption.0);
+            proofs.push(decryption.1);
+            //println!("Construction: {:?} {:?}", decryption.0,  decryption.1);
+            //println!("{} {}", decryption.0.to_bytes().len(), decryption.1.to_bytes().len());
+        }
+        let decryptions = serialize_decryption(verifiable_decryptions, proofs);
+
+        let poll_response = decrypt_tally(decryptions, &mut deps, info);
+        println!("{:?}", poll_response.decrypted_tally);
+        assert!(poll_response.decrypted_tally.len() == 3, "Decrypted tally should be equal to 3");
+        assert!(*poll_response.decrypted_tally.get(0).unwrap() == 2);
+        assert!(*poll_response.decrypted_tally.get(1).unwrap() == 1);
+        assert!(*poll_response.decrypted_tally.get(2).unwrap() == 3);        
         
     }
 }
